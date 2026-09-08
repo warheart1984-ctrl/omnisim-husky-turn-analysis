@@ -1,0 +1,36 @@
+{
+  "diagnostic_protocol_version": "1.0",
+  "build_id": "7d39130cf",
+  "robot": "husky_ne",
+  "world": "projects/samples/demos/worlds/flagship/omnilink_husky_swarm.omniworld",
+  "step1_temporal_alignment": "PASS",
+  "step2_pre_dispatch_drift": {
+    "dx": 0.0,
+    "dy": 0.0,
+    "dyaw": 0.0,
+    "status": "PASS"
+  },
+  "step3_command_kinematics": {
+    "wheel_vel_rad_s": 1.03719,
+    "wheel_radius_m": 0.165,
+    "track_width_m": 0.555,
+    "expected_yaw_rate_rad_s": 0.616,
+    "expected_yaw_rate_deg_s": 35.3,
+    "status": "PASS"
+  },
+  "step4_bridge_integration": {
+    "commanded_rad": 1.5707963267948966,
+    "achieved_rad": 0.16265200691250703,
+    "gain_ratio_r": 0.1035474836157705,
+    "multiplier_g": 9.657405135122936,
+    "R_interpretation": "PID_GAIN_ERROR_9_66x_TOO_SMALL",
+    "status": "FAIL"
+  },
+  "step5_odometry_vs_bridge": {
+    "delta_odom": 0.0,
+    "interpretation": "ERROR_IN_BRIDGE_INTERNAL_GAIN_NOT_FRAME_TRANSFORM",
+    "status": "PASS"
+  },
+  "root_cause": "Bridge turn PID gain (Kp) ~9.66x too small, likely missing wheel_radius and factor-of-2 in gain computation",
+  "recommended_fix": "Multiply bridge turn Kp by 9.66 or recompute from physical constants: Kp \u221d track_width / (2 * wheel_radius)"
+}

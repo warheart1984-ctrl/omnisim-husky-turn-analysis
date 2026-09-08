@@ -1,0 +1,22 @@
+{
+  "world": "projects/samples/demos/worlds/flagship/omnilink_husky_swarm.omniworld",
+  "robot": "husky_ne",
+  "commanded_rad": 1.5707963267948966,
+  "commanded_deg": 90.0,
+  "achieved_rad": 0.16265200691250703,
+  "achieved_deg": 9.319384209870012,
+  "error_rad": -1.4081443198823895,
+  "error_deg": -80.68061579012999,
+  "correction_pulses": 10,
+  "sim_time_at_result_s": 57.52,
+  "reported_settled_before_fix": true,
+  "reporting_fix": {
+    "settled_after_fix_for_this_exit_condition": false,
+    "completion_reason": "correction_limit"
+  },
+  "build": "7d39130cf",
+  "machine_id": "9722d23d12a3",
+  "physics": "newton/MuJoCo (cpu/mj_step, WorldInfo.newtonSolver)",
+  "os": "Windows 11",
+  "gpu": "NVIDIA GeForce RTX 3060 Laptop GPU"
+}
