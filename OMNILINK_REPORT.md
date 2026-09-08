@@ -1,6 +1,6 @@
 # OmniLink Husky Turn Actuation Failure — Root Cause Analysis Report
 
-**Date:** 2026-09-07  
+**Date:** 2026-09-07 (updated 2026-09-08)  
 **Build:** 11343e3aa (OmniSim v8.3)  
 **Physics:** Newton/MuJoCo CPU  
 **Machine:** 9722d23d12a3 (RTX 3060 Laptop)  
@@ -11,45 +11,55 @@
 ## Executive Summary
 
 A commanded **+90° turn** on `husky_ne` achieves only **+9.3°** (−80.7° error) after 10 correction pulses.  
-**Root cause:** Wheel motors receive velocity commands (±1.037 rad/s) but stall at **~0.011 rad/s (1.06% of target)**.  
+**Root cause: OPEN** — Wheel motors receive velocity commands (±1.037 rad/s) but stall at **~0.011 rad/s (1.06% of target)**.  
 **Not a collider issue** — enabling the proper Newton robot-collider path made performance slightly worse (0.51% vs 0.56%).
 
-**Failure mode:** Wheel motor actuation path — motors cannot sustain torque against load due to:
-1. **Excessive damping (kd=500)** → viscous force ≈ 500 Nm >> effort limit
-2. **Insufficient motor effort (200)** → cannot overcome Husky inertia
+**Critical correction from OmniLink (2026-09-08):** My earlier damping/effort analysis was based on an incorrect actuator model. The Newton velocity actuator uses `kd` as a **feedback gain on velocity error**, not a passive damping coefficient. Root cause remains **open** until per-pulse actuator force/torque measurement exists.
 
 ---
 
 ## Evidence Summary
 
-| Test | Commanded | Achieved | Ratio | Pulses |
-|------|-----------|----------|-------|--------|
-| 90° turn (original) | 90.0° | 9.3° | 10.3% | 10 (maxed) |
-| Single pulse +0.6 rad/s | 0.605 rad | 0.0034 rad | 0.56% | 1 |
-| Single pulse + collider | 0.605 rad | 0.0031 rad | 0.51% | 1 |
+| Test | Commanded | Achieved | Ratio | Pulses | Settled |
+|------|-----------|----------|-------|--------|---------|
+| 90° turn (original) | 90.0° | 9.3° | 10.3% | 10 (maxed) | false |
+| Single pulse +0.6 rad/s | 0.605 rad | 0.0034 rad | 0.56% | 1 | — |
+| Single pulse + collider | 0.605 rad | 0.0031 rad | 0.51% | 1 | — |
 
-**Key observation:** Wheel targets reach backend (±1.037 rad/s) but actual wheel speeds decay from ~0.97 rad/s to **0.011 rad/s** within 0.1s. Chassis yaw rate remains ~0 throughout.
+**Key observations:**
+- Wheel targets reach backend (±1.037 rad/s)
+- Actual wheel speeds decay from ~0.97 rad/s to **0.011 rad/s** within 0.1s
+- Chassis yaw rate remains ~0 throughout
+- Enabling Robot wrapper collider made performance slightly worse (0.51% vs 0.56%)
 
 ---
 
-## Root Cause: Wheel Motor Actuation Failure
+## Actuator Contract Clarification (Critical)
 
-### Motor Parameters (from engine log)
+**OmniLink correction (2026-09-08):** My earlier analysis used an incorrect actuator model.
+
+**Newton velocity actuator model:**
 ```
-effort=200          # Max torque/force
-velLim=60 rad/s     # Velocity limit (not binding)
-kd=500              # Damping coefficient (very high)
-axis=(0,1,0)        # Hinge axis (Y-axis = wheel rotation)
+actuator_force = clamp( kd × (target_velocity - actual_velocity), -effort, +effort )
 ```
 
-### Failure Mechanism
-| Factor | Effect |
-|--------|--------|
-| **kd=500** | Viscous damping force = kd × velocity ≈ 500 × 1 = **500 Nm** at 1 rad/s |
-| **effort=200** | Motor torque limit = **200 Nm** |
-| **Result** | Damping force (500 Nm) > effort limit (200 Nm) → **motor stalls immediately** |
+| Parameter | Value | Role |
+|-----------|-------|------|
+| `kd=500` | Feedback gain on **velocity error** | NOT a passive damping coefficient |
+| `effort=200` | Output force **clamp** | Limits actuator force output |
+| `velLim=60` | Velocity limit | Not binding (target 1.037 << 60) |
 
-The motors spin up briefly (~0.97 rad/s at 0.112s) then decay to 0.011 rad/s as damping overwhelms available torque.
+**What this means:**
+- `kd=500` is the **feedback gain** on velocity error `(target - actual)`, not a passive damping torque
+- The actuator applies force proportional to **velocity error**, not velocity
+- `effort=200` clamps the **output force**, not the damping
+- My earlier claim "kd=500 → 500 Nm damping" was **incorrect**
+
+**What we still don't know:**
+- Is the actuator saturating at `effort=200`? (force clamp)
+- Is the velocity error `(target - actual)` large enough to drive saturation?
+- Are wheel-ground contacts generating reaction forces?
+- Is the chassis yaw inertia preventing wheel acceleration?
 
 ---
 
@@ -60,50 +70,61 @@ The motors spin up briefly (~0.97 rad/s at 0.112s) then decay to 0.011 rad/s as 
 | Baseline (no Robot collider) | 0.00338 rad | **0.559%** |
 | Explicit root collider | 0.00309 rad | **0.511%** |
 
-Enabling `WorldInfo.newtonRobotColliders TRUE` made performance **worse**, not better. The Husky URDF already provides per-link collision geometry; the Robot-wrapper `boundingObject` warning is a red herring.
+Enabling `WorldInfo.newtonRobotColliders TRUE` made performance **worse**, not better. The Husky URDF already provides per-link collision geometry; the Robot-wrapper `boundingObject` warning is a red herring. **Confirmed by OmniLink.**
 
 ---
 
-## Recommended Fixes (Priority Order)
+## Root Cause Status: OPEN
 
-| Priority | Fix | Location | Expected Effect |
-|----------|-----|----------|-----------------|
-| **P0** | `OMNISIM_NEWTON_PROMOTE_SERVO=0` | Launch environment | Prevents accidental position-servo promotion |
-| **P0** | `kd=500` → `kd=50` (or 10) | Husky URDF / joint def | Reduces damping force 10-50× |
-| **P0** | `effort=200` → `effort=2000` | Husky URDF / joint def | Allows motor to overcome load |
-| **P1** | Verify joint axis = `0 1 0` | Husky URDF | Confirms torque applied in correct direction |
-| **P1** | Confirm no `minStop`/`maxStop` | Husky URDF | Continuous rotation required |
-| **P2** | Fix joint order (depth-first) | Husky URDF | Eliminates MuJoCo/Newton divergence warning |
+| Hypothesis | Status | Evidence Needed |
+|------------|--------|-----------------|
+| Effort saturation (200 Nm clamp) | 🟡 PLAUSIBLE | Per-pulse actuator force trace |
+| Velocity error not closing | 🟡 PLAUSIBLE | Per-pulse target vs actual velocity |
+| Wheel slip / contact loss | 🟡 PLAUSIBLE | Wheel-ground contact forces |
+| Chassis inertia too high | 🟡 PLAUSIBLE | Chassis yaw rate vs wheel torque |
+| Motor promotion bug | 🟢 LOW | Evidence of `setPosition()` call |
+| Collider issue | ❌ REFUTED | Collider comparison done |
 
----
-
-## Validation Plan
-
-1. **Apply P0 fixes** (disable promotion, reduce kd, increase effort)
-2. **Run single-pulse test** with motor telemetry enabled (`OMNILINK_PULSE_TRACE=...`)
-3. **Verify:**
-   - Wheel `actual_vel` ≈ `target_vel` (±1.037 rad/s)
-   - Motor `torque` < effort limit (not saturated)
-   - Chassis `yaw_rate` ≈ 0.6 rad/s during pulse
-   - Achieved/commanded ratio → ~0.17 (typical skid-steer gain)
-4. **Run full 90° turn** — should achieve ~90° in 4-5 pulses
+**OmniLink's required measurement:** One correction pulse with:
+- Backend-applied actuator force/torque
+- Wheel angular velocity (target vs actual)
+- Wheel-ground contacts
+- Chassis yaw rate
+All in the same trace.
 
 ---
 
-## Instrumentation Ready
+## Next Measurement: Instrumented Single Pulse
 
-**Pulse trace instrumentation** (`pulse_trace_patch.py`) captures per-tick:
+Our pulse trace tooling (`pulse_trace_patch.py`) captures per-tick:
 - Wheel targets vs actuals (4 motors)
-- Motor internal state: `target_vel`, `actual_vel`, `torque`, `force`, `position`
+- **Motor internal state**: `target_vel`, `actual_vel`, `torque`, `force`, `position`
 - Chassis pose, yaw rate, contact count
 - Gain updates, pulse timing
 
-**Analyzer** (`analyze_pulse_trace.py`) detects:
-- Torque saturation (effort limit)
-- High damping force (kd=500)
-- Gain convergence, slip, yaw rate tracking
+**Next step:** Run instrumented single pulse with `OMNILINK_PULSE_TRACE=...` and analyze:
+1. `motor_states[i].force` — backend-applied actuator force (should show saturation at ±200 if effort-limited)
+2. `motor_states[i].torque` — backend-applied torque
+3. `motor_states[i].actual_vel` vs `target_vel` — velocity error
+4. `contact_count` — wheel-ground contacts during pulse
+5. `chassis_yaw_rate` — chassis response
 
-Enable with: `export OMNILINK_PULSE_TRACE=/path/to/trace.jsonl`
+This will separate:
+- **Effort saturation** → `force` hits ±200 clamp
+- **Velocity error not closing** → `target_vel - actual_vel` stays large
+- **Contact/slip** → contact count drops or force doesn't translate to yaw
+
+---
+
+## Recommended Next Steps
+
+1. **Run instrumented single pulse** with `OMNILINK_PULSE_TRACE=/path/to/trace.jsonl`
+2. **Analyze trace** for:
+   - Actuator force vs effort limit (saturation at ±200?)
+   - Velocity error (target - actual) during pulse
+   - Contact count during pulse
+   - Chassis yaw rate response
+3. **Report findings** to OmniLink — root cause remains open until this measurement exists
 
 ---
 
@@ -112,23 +133,25 @@ Enable with: `export OMNILINK_PULSE_TRACE=/path/to/trace.jsonl`
 | File | Description |
 |------|-------------|
 | `pulse_trace_patch.py` | Instrumentation for `omnilink_mobile_bridge.py` with motor telemetry |
-| `analyze_pulse_trace.py` | Analyzer for torque saturation & damping force |
+| `analyze_pulse_trace.py` | Analyzer for effort saturation, velocity error, contact response |
 | `FINDINGS_NOTE.md` | Full root cause analysis (this document source) |
+| `OMNILINK_REPORT.md` | This document |
 | `turn_gain_estimator.py` | Inactive evidence metadata (bridge ignores gain fields) |
-| `adapter_integration_patch.py` | Integration example for adapter |
+| `adapter_integration_patch.py` | Example adapter integration |
 
 ---
 
-## Next Steps for OmniLink
+## Status Summary
 
-1. **Apply P0 fixes** to Husky URDF/joint definitions
-2. **Run instrumented single-pulse test** to confirm motor telemetry shows:
-   - `torque` < effort limit (no saturation)
-   - `force` (damping) reduced to manageable levels
-   - `actual_vel` ≈ `target_vel`
-3. **Re-run 90° turn** — expect ~90° in 4-5 pulses
+| Item | Status |
+|------|--------|
+| **Root Cause** | OPEN — Actuator contract clarified; not yet isolated |
+| **Collider Hypothesis** | REFUTED — Confirmed by OmniLink |
+| **Motor Promotion** | UNPROVEN — Needs evidence of `setPosition()` call |
+| **Tooling** | READY — Pulse trace captures motor state per tick |
+| **Next Step** | Instrumented single pulse with motor telemetry |
 
 ---
 
-**Contact:** Lear / OmniLink Agents  
-**Repository:** https://github.com/warheart1984-ctrl/omnisim-husky-turn-analysis
+**Repository:** https://github.com/warheart1984-ctrl/omnisim-husky-turn-analysis  
+**Contact:** Lear / OmniLink Agents
